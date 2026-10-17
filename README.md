@@ -145,6 +145,19 @@ GitHub Actions compiles binaries for Windows, macOS (Universal Apple Silicon & I
 
 ---
 
+## Support the Project
+
+If you find **lunoite** useful and would like to support ongoing development by **Lunoit Labs**, you can contribute via:
+
+- **International (PayPal / Card)**: [Ko-fi (ko-fi.com/lunoit)](https://ko-fi.com/lunoit)
+- **Indonesia (QRIS / GoPay / OVO / DANA / Bank Transfer)**: [Lynk.id (lynk.id/lunoit)](https://lynk.id/lunoit)
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Lunoit%20Labs-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/lunoit)
+[![Lynk.id](https://img.shields.io/badge/Lynk.id-Dukung%20via%20QRIS%20%2F%20ID-10B981?style=for-the-badge)](https://lynk.id/lunoit)
+
+---
+
 ## License
 
-MIT License © 2026 Moondust Labs. Feel free to use, modify, and distribute this application.
+MIT License © 2026 Lunoit Labs. Feel free to use, modify, and distribute this application.
+
