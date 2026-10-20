@@ -18,7 +18,7 @@ import { NewWorkspaceModal } from './components/Workspace/NewWorkspaceModal';
 import { RecentWorkspacesModal } from './components/Workspace/RecentWorkspacesModal';
 import { NonMarkdownPreviewNotice } from './components/Editor/NonMarkdownPreviewNotice';
 import { scrollToActiveMatch } from './lib/searchHighlightExtension';
-import { getTauriCliFile, readNativeFile, writeNativeFile } from './lib/tauri';
+import { getTauriCliFile, readNativeFile, writeNativeFile, isTauri, pickNativeFile } from './lib/tauri';
 
 import { computeStats, downloadMarkdownFile } from './lib/markdown';
 import { INITIAL_CARDS } from './lib/defaultCards';
@@ -103,6 +103,29 @@ export const App: React.FC = () => {
 
   // Open single Markdown file from disk (independent of workspace folder)
   const handleOpenSingleFile = useCallback(async () => {
+    if (isTauri()) {
+      const filePath = await pickNativeFile();
+      if (filePath) {
+        try {
+          const content = await readNativeFile(filePath);
+          const fileName = filePath.split(/[\\/]/).pop() || 'document.md';
+          const tabId = `native:${filePath}`;
+          const node: FileTreeNode = {
+            id: tabId,
+            name: fileName,
+            path: fileName,
+            nativePath: filePath,
+            kind: 'file',
+            extension: fileName.split('.').pop() || 'md',
+          };
+          openTab(node, content, { nativePath: filePath, isSingleFile: true });
+        } catch (err) {
+          console.error('Failed to open native file:', err);
+        }
+      }
+      return;
+    }
+
     if (typeof window !== 'undefined' && 'showOpenFilePicker' in window) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -185,8 +208,10 @@ export const App: React.FC = () => {
       setIsFindBarOpen(false);
 
       try {
-        const content = await readFile(node.handle as FileSystemFileHandle);
-        openTab(node, content);
+        const content = node.nativePath
+          ? await readNativeFile(node.nativePath)
+          : await readFile(node.handle as FileSystemFileHandle, node.nativePath);
+        openTab(node, content, { nativePath: node.nativePath });
 
         const effectiveQuery =
           query ||
@@ -447,21 +472,24 @@ export const App: React.FC = () => {
 
   // Create new file
   const handleCreateFile = useCallback(
-    async (parentHandle: FileSystemDirectoryHandle, name: string) => {
-      const newHandle = await createFile(parentHandle, name);
-      if (newHandle) {
+    async (parentHandle?: FileSystemDirectoryHandle, name?: string, parentNativePath?: string) => {
+      if (!name) return;
+      const res = await createFile(parentHandle, name, undefined, parentNativePath);
+      if (res) {
         const cleanName = name.includes('.') ? name : `${name}.md`;
         const initialText = '# Untitled\n\nStart writing...\n';
         const dummyNode: FileTreeNode = {
-          id: cleanName,
+          id: res.nativePath ? `native:${res.nativePath}` : cleanName,
           name: cleanName,
           path: cleanName,
+          nativePath: res.nativePath,
+          parentNativePath,
           kind: 'file',
-          handle: newHandle,
+          handle: res.handle,
           parentHandle,
           extension: 'md',
         };
-        openTab(dummyNode, initialText);
+        openTab(dummyNode, initialText, { nativePath: res.nativePath });
       }
     },
     [createFile, openTab]
@@ -469,20 +497,23 @@ export const App: React.FC = () => {
 
   // Create new folder
   const handleCreateFolder = useCallback(
-    async (parentHandle: FileSystemDirectoryHandle, name: string) => {
-      await createFolder(parentHandle, name);
+    async (parentHandle?: FileSystemDirectoryHandle, name?: string, parentNativePath?: string) => {
+      if (!name) return;
+      await createFolder(parentHandle, name, parentNativePath);
     },
     [createFolder]
   );
 
   // Delete node
   const handleDeleteNode = useCallback(
-    async (parentHandle: FileSystemDirectoryHandle, name: string) => {
-      const targetTab = tabs.find(t => t.name === name);
+    async (parentHandle?: FileSystemDirectoryHandle, name?: string, node?: FileTreeNode) => {
+      if (!name && !node) return;
+      const targetName = name || node?.name;
+      const targetTab = tabs.find(t => t.name === targetName || (node && t.id === node.id));
       if (targetTab) {
         handleCloseTab(targetTab.id);
       }
-      await deleteEntry(parentHandle, name);
+      await deleteEntry(parentHandle, name, node);
     },
     [tabs, handleCloseTab, deleteEntry]
   );
@@ -490,12 +521,14 @@ export const App: React.FC = () => {
   // Rename node
   const handleRenameNode = useCallback(
     async (
-      parentHandle: FileSystemDirectoryHandle,
-      oldName: string,
-      newName: string,
-      kind: 'file' | 'directory'
+      parentHandle?: FileSystemDirectoryHandle,
+      oldName?: string,
+      newName?: string,
+      kind: 'file' | 'directory' = 'file',
+      node?: FileTreeNode
     ) => {
-      await renameEntry(parentHandle, oldName, newName, kind);
+      if (!oldName || !newName) return;
+      await renameEntry(parentHandle, oldName, newName, kind, node);
     },
     [renameEntry]
   );
@@ -959,7 +992,7 @@ export const App: React.FC = () => {
                 );
               })}
             </div>
-          ) : workspace.rootHandle ? (
+          ) : workspace.rootHandle || workspace.nativePath ? (
 
 
             <div className="flex-1 flex items-center justify-center p-6 text-center text-xs text-[#59606d] dark:text-[#9ba2b0]">

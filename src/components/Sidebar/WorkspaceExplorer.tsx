@@ -24,18 +24,19 @@ interface WorkspaceExplorerProps {
   workspace: WorkspaceState;
   activeFileId: string | null;
   onSelectFile: (node: TreeNodeType, targetMatch?: SearchMatch, query?: string) => void;
-  onCreateFile: (parentHandle: FileSystemDirectoryHandle, name: string) => void;
-  onCreateFolder: (parentHandle: FileSystemDirectoryHandle, name: string) => void;
-  onDeleteNode: (parentHandle: FileSystemDirectoryHandle, name: string) => void;
+  onCreateFile: (parentHandle?: FileSystemDirectoryHandle, name?: string, parentNativePath?: string) => void;
+  onCreateFolder: (parentHandle?: FileSystemDirectoryHandle, name?: string, parentNativePath?: string) => void;
+  onDeleteNode: (parentHandle?: FileSystemDirectoryHandle, name?: string, node?: TreeNodeType) => void;
   onRenameNode: (
-    parentHandle: FileSystemDirectoryHandle,
-    oldName: string,
-    newName: string,
-    kind: 'file' | 'directory'
+    parentHandle?: FileSystemDirectoryHandle,
+    oldName?: string,
+    newName?: string,
+    kind?: 'file' | 'directory',
+    node?: TreeNodeType
   ) => void;
   onRefresh: () => void;
   onCloseWorkspace: () => void;
-  readFile?: (fileHandle: FileSystemFileHandle) => Promise<string>;
+  readFile?: (fileHandle?: FileSystemFileHandle, nativePath?: string) => Promise<string>;
   openTabs?: OpenTab[];
   activeSidebarTab?: 'files' | 'search';
   onTabChange?: (tab: 'files' | 'search') => void;
@@ -214,6 +215,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
   const [isNewFolderPromptOpen, setIsNewFolderPromptOpen] = useState(false);
   const [newEntryName, setNewEntryName] = useState('');
   const [targetDirHandle, setTargetDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [targetDirNativePath, setTargetDirNativePath] = useState<string | null>(null);
 
   // Full-text workspace search hook
   const {
@@ -228,36 +230,38 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
     clearSearch: clearTextSearch,
   } = useWorkspaceSearch({
     tree: workspace.tree,
-    readFile: readFile || (async h => (await h.getFile()).text()),
+    readFile: readFile || (async (h?: FileSystemFileHandle) => (h ? (await h.getFile()).text() : '')),
     openTabs,
   });
 
-  if (!isOpen || !workspace.rootHandle) return null;
+  if (!isOpen || (!workspace.rootHandle && !workspace.nativePath)) return null;
 
-  const handleOpenNewFilePrompt = (dirHandle?: FileSystemDirectoryHandle) => {
-    setTargetDirHandle(dirHandle || workspace.rootHandle);
+  const handleOpenNewFilePrompt = (dirHandle?: FileSystemDirectoryHandle, dirNativePath?: string) => {
+    setTargetDirHandle(dirHandle || workspace.rootHandle || null);
+    setTargetDirNativePath(dirNativePath || workspace.nativePath || null);
     setNewEntryName('');
     setIsNewFilePromptOpen(true);
   };
 
-  const handleOpenNewFolderPrompt = (dirHandle?: FileSystemDirectoryHandle) => {
-    setTargetDirHandle(dirHandle || workspace.rootHandle);
+  const handleOpenNewFolderPrompt = (dirHandle?: FileSystemDirectoryHandle, dirNativePath?: string) => {
+    setTargetDirHandle(dirHandle || workspace.rootHandle || null);
+    setTargetDirNativePath(dirNativePath || workspace.nativePath || null);
     setNewEntryName('');
     setIsNewFolderPromptOpen(true);
   };
 
   const handleCreateFileSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (targetDirHandle && newEntryName.trim()) {
-      onCreateFile(targetDirHandle, newEntryName.trim());
+    if ((targetDirHandle || targetDirNativePath) && newEntryName.trim()) {
+      onCreateFile(targetDirHandle as FileSystemDirectoryHandle, newEntryName.trim(), targetDirNativePath || undefined);
       setIsNewFilePromptOpen(false);
     }
   };
 
   const handleCreateFolderSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (targetDirHandle && newEntryName.trim()) {
-      onCreateFolder(targetDirHandle, newEntryName.trim());
+    if ((targetDirHandle || targetDirNativePath) && newEntryName.trim()) {
+      onCreateFolder(targetDirHandle as FileSystemDirectoryHandle, newEntryName.trim(), targetDirNativePath || undefined);
       setIsNewFolderPromptOpen(false);
     }
   };
@@ -453,7 +457,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
           {isNewFilePromptOpen && (
             <form onSubmit={handleCreateFileSubmit} className="p-2 bg-[#f8f7f4] dark:bg-[#111215] border-b border-[#e5e3dc] dark:border-[#282b33]">
               <label className="block text-[10px] font-medium text-[#59606d] dark:text-[#9ba2b0] mb-1">
-                New File in {targetDirHandle?.name || 'workspace'}:
+                New File in {targetDirHandle?.name || (targetDirNativePath ? targetDirNativePath.split(/[\\/]/).pop() : workspace.name) || 'workspace'}:
               </label>
               <div className="flex gap-1">
                 <input
@@ -489,7 +493,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
           {isNewFolderPromptOpen && (
             <form onSubmit={handleCreateFolderSubmit} className="p-2 bg-[#f8f7f4] dark:bg-[#111215] border-b border-[#e5e3dc] dark:border-[#282b33]">
               <label className="block text-[10px] font-medium text-[#59606d] dark:text-[#9ba2b0] mb-1">
-                New Folder in {targetDirHandle?.name || 'workspace'}:
+                New Folder in {targetDirHandle?.name || (targetDirNativePath ? targetDirNativePath.split(/[\\/]/).pop() : workspace.name) || 'workspace'}:
               </label>
               <div className="flex gap-1">
                 <input
@@ -534,8 +538,8 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
                   onExpandFolder={handleExpandFolder}
                   isSearching={Boolean(searchQuery.trim())}
                   onSelectFile={handleSelectFileWithReveal}
-                  onCreateFileInDir={dirHandle => handleOpenNewFilePrompt(dirHandle)}
-                  onCreateFolderInDir={dirHandle => handleOpenNewFolderPrompt(dirHandle)}
+                  onCreateFileInDir={(dirHandle, dirNativePath) => handleOpenNewFilePrompt(dirHandle, dirNativePath)}
+                  onCreateFolderInDir={(dirHandle, dirNativePath) => handleOpenNewFolderPrompt(dirHandle, dirNativePath)}
                   onDeleteNode={onDeleteNode}
                   onRenameNode={onRenameNode}
                 />

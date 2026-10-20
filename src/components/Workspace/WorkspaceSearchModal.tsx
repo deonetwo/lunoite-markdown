@@ -9,7 +9,7 @@ interface WorkspaceSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   tree: FileTreeNode[];
-  readFile: (fileHandle: FileSystemFileHandle) => Promise<string>;
+  readFile: (fileHandle?: FileSystemFileHandle, nativePath?: string) => Promise<string>;
   openTabs: OpenTab[];
   onSelectMatch: (node: FileTreeNode, match: SearchMatch, query?: string) => void;
   workspaceName?: string;

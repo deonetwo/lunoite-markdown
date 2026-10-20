@@ -6,16 +6,30 @@ import {
   clearDirectoryHandle,
   verifyHandlePermission,
   recordRecentWorkspace,
+  recordNativeRecentWorkspace,
   getRecentWorkspaces,
   removeRecentWorkspace,
   clearAllRecentWorkspaces,
 } from '../lib/indexedDb';
+import {
+  isTauri,
+  pickNativeDirectory,
+  scanNativeDirectory,
+  readNativeFile,
+  writeNativeFile,
+  createNativeFile,
+  createNativeDir,
+  deleteNativeEntry,
+  renameNativeEntry,
+} from '../lib/tauri';
 
 const WORKSPACE_STORAGE_KEY = 'lunoite_active_workspace';
+const NATIVE_WORKSPACE_STORAGE_KEY = 'lunoite_active_native_workspace';
 
 export function useWorkspace() {
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     rootHandle: null,
+    nativePath: undefined,
     name: '',
     tree: [],
     isLoading: false,
@@ -27,9 +41,9 @@ export function useWorkspace() {
   );
 
   const isNativeSupported =
-    typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+    isTauri() || (typeof window !== 'undefined' && 'showDirectoryPicker' in window);
 
-  // Recursively scans a directory handle and returns a structured FileTreeNode array
+  // Recursively scans a directory handle for browser mode and returns a structured FileTreeNode array
   const scanDirectory = useCallback(
     async (
       dirHandle: FileSystemDirectoryHandle,
@@ -96,8 +110,18 @@ export function useWorkspace() {
     []
   );
 
-  // Refresh tree using existing rootHandle
+  // Refresh tree using nativePath (Tauri) or rootHandle (browser)
   const refreshTree = useCallback(async () => {
+    if (isTauri() && workspace.nativePath) {
+      try {
+        const tree = await scanNativeDirectory(workspace.nativePath);
+        setWorkspace(prev => ({ ...prev, tree }));
+      } catch (err) {
+        console.error('Failed to refresh native file tree:', err);
+      }
+      return;
+    }
+
     if (!workspace.rootHandle) return;
     try {
       const tree = await scanDirectory(workspace.rootHandle);
@@ -105,10 +129,52 @@ export function useWorkspace() {
     } catch (err) {
       console.error('Failed to refresh file tree:', err);
     }
-  }, [workspace.rootHandle, scanDirectory]);
+  }, [workspace.nativePath, workspace.rootHandle, scanDirectory]);
 
-  // Open a new workspace via showDirectoryPicker
+  // Open a new workspace via native dialog (Tauri) or showDirectoryPicker (browser)
   const openWorkspace = useCallback(async (): Promise<boolean> => {
+    if (isTauri()) {
+      try {
+        setWorkspace(prev => ({ ...prev, isLoading: true, error: null }));
+        const dirPath = await pickNativeDirectory();
+        if (!dirPath) {
+          setWorkspace(prev => ({ ...prev, isLoading: false }));
+          return false;
+        }
+
+        const name = dirPath.split(/[\\/]/).pop() || dirPath;
+        const tree = await scanNativeDirectory(dirPath);
+
+        try {
+          localStorage.setItem(NATIVE_WORKSPACE_STORAGE_KEY, dirPath);
+        } catch {
+          // ignore
+        }
+
+        const updatedRecents = recordNativeRecentWorkspace(dirPath, name);
+        setRecentWorkspaces(updatedRecents);
+
+        setWorkspace({
+          rootHandle: null,
+          nativePath: dirPath,
+          name,
+          tree,
+          isLoading: false,
+          error: null,
+        });
+
+        return true;
+      } catch (err) {
+        console.error('Error opening native workspace:', err);
+        setWorkspace(prev => ({
+          ...prev,
+          isLoading: false,
+          error: 'Failed to open directory.',
+        }));
+        return false;
+      }
+    }
+
     if (!isNativeSupported) {
       alert(
         'Directory Picker API is not supported in this browser. Please use Chrome, Edge, or a Chromium-based browser.'
@@ -130,6 +196,7 @@ export function useWorkspace() {
 
       setWorkspace({
         rootHandle,
+        nativePath: undefined,
         name: rootHandle.name,
         tree,
         isLoading: false,
@@ -157,6 +224,34 @@ export function useWorkspace() {
     async (recent: RecentWorkspace): Promise<boolean> => {
       try {
         setWorkspace(prev => ({ ...prev, isLoading: true, error: null }));
+
+        if (recent.nativePath || isTauri()) {
+          const dirPath = recent.nativePath || (isTauri() ? recent.handleKey : undefined);
+          if (dirPath && typeof dirPath === 'string' && (dirPath.includes('/') || dirPath.includes('\\'))) {
+            const name = recent.name || dirPath.split(/[\\/]/).pop() || dirPath;
+            const tree = await scanNativeDirectory(dirPath);
+
+            try {
+              localStorage.setItem(NATIVE_WORKSPACE_STORAGE_KEY, dirPath);
+            } catch {
+              // ignore
+            }
+
+            const updatedRecents = recordNativeRecentWorkspace(dirPath, name);
+            setRecentWorkspaces(updatedRecents);
+
+            setWorkspace({
+              rootHandle: null,
+              nativePath: dirPath,
+              name,
+              tree,
+              isLoading: false,
+              error: null,
+            });
+
+            return true;
+          }
+        }
 
         let handle = await getDirectoryHandle(recent.handleKey);
         if (!handle) {
@@ -189,6 +284,7 @@ export function useWorkspace() {
         const tree = await scanDirectory(handle);
         setWorkspace({
           rootHandle: handle,
+          nativePath: undefined,
           name: handle.name,
           tree,
           isLoading: false,
@@ -220,6 +316,60 @@ export function useWorkspace() {
       initialNoteTitle = 'Welcome.md',
       initialNoteContent?: string
     ): Promise<FileSystemDirectoryHandle | null> => {
+      if (isTauri()) {
+        try {
+          setWorkspace(prev => ({ ...prev, isLoading: true, error: null }));
+          const parentDir = await pickNativeDirectory();
+          if (!parentDir) {
+            setWorkspace(prev => ({ ...prev, isLoading: false }));
+            return null;
+          }
+
+          const cleanName = name.trim();
+          const workspacePath = await createNativeDir(parentDir, cleanName);
+
+          if (initialNoteTitle && initialNoteTitle.trim()) {
+            const noteName = initialNoteTitle.trim().endsWith('.md')
+              ? initialNoteTitle.trim()
+              : `${initialNoteTitle.trim()}.md`;
+            const starterContent =
+              initialNoteContent ??
+              `# ${cleanName}\n\nWelcome to your new Lunoite workspace. Start writing your notes or STAR stories here.\n`;
+            const notePath = await createNativeFile(workspacePath, noteName);
+            await writeNativeFile(notePath, starterContent);
+          }
+
+          try {
+            localStorage.setItem(NATIVE_WORKSPACE_STORAGE_KEY, workspacePath);
+          } catch {
+            // ignore
+          }
+
+          const updatedRecents = recordNativeRecentWorkspace(workspacePath, cleanName);
+          setRecentWorkspaces(updatedRecents);
+
+          const tree = await scanNativeDirectory(workspacePath);
+          setWorkspace({
+            rootHandle: null,
+            nativePath: workspacePath,
+            name: cleanName,
+            tree,
+            isLoading: false,
+            error: null,
+          });
+
+          return null;
+        } catch (err) {
+          console.error('Error creating native workspace:', err);
+          setWorkspace(prev => ({
+            ...prev,
+            isLoading: false,
+            error: 'Failed to create workspace.',
+          }));
+          return null;
+        }
+      }
+
       if (!isNativeSupported) {
         alert(
           'Directory Picker API is not supported in this browser. Please use Chrome, Edge, or a Chromium-based browser.'
@@ -262,6 +412,7 @@ export function useWorkspace() {
         const tree = await scanDirectory(workspaceHandle);
         setWorkspace({
           rootHandle: workspaceHandle,
+          nativePath: undefined,
           name: workspaceHandle.name,
           tree,
           isLoading: false,
@@ -300,9 +451,15 @@ export function useWorkspace() {
 
   // Close active workspace
   const closeWorkspace = useCallback(async () => {
+    try {
+      localStorage.removeItem(NATIVE_WORKSPACE_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
     await clearDirectoryHandle(WORKSPACE_STORAGE_KEY);
     setWorkspace({
       rootHandle: null,
+      nativePath: undefined,
       name: '',
       tree: [],
       isLoading: false,
@@ -310,11 +467,39 @@ export function useWorkspace() {
     });
   }, []);
 
-  // Restore previous workspace from IndexedDB on startup
+  // Restore previous workspace on startup: instant zero-prompt restoration in Tauri desktop
   useEffect(() => {
     async function restore() {
       try {
         setRecentWorkspaces(getRecentWorkspaces());
+
+        if (isTauri()) {
+          const savedNativePath = localStorage.getItem(NATIVE_WORKSPACE_STORAGE_KEY);
+          if (savedNativePath) {
+            try {
+              const name = savedNativePath.split(/[\\/]/).pop() || savedNativePath;
+              const tree = await scanNativeDirectory(savedNativePath);
+              if (tree.length > 0 || savedNativePath) {
+                setWorkspace({
+                  rootHandle: null,
+                  nativePath: savedNativePath,
+                  name,
+                  tree,
+                  isLoading: false,
+                  error: null,
+                });
+                const updated = recordNativeRecentWorkspace(savedNativePath, name);
+                setRecentWorkspaces(updated);
+                return;
+              }
+            } catch (err) {
+              console.warn('Could not automatically restore native workspace:', err);
+            }
+          }
+          return;
+        }
+
+        // Web browser restore via IndexedDB directory handle
         const savedHandle = await getDirectoryHandle(WORKSPACE_STORAGE_KEY);
         if (!savedHandle) return;
 
@@ -323,6 +508,7 @@ export function useWorkspace() {
           const tree = await scanDirectory(savedHandle);
           setWorkspace({
             rootHandle: savedHandle,
+            nativePath: undefined,
             name: savedHandle.name,
             tree,
             isLoading: false,
@@ -341,85 +527,140 @@ export function useWorkspace() {
 
   // File Operations on Disk
   const readFile = useCallback(
-    async (fileHandle: FileSystemFileHandle): Promise<string> => {
-      const file = await fileHandle.getFile();
-      return await file.text();
+    async (fileHandle?: FileSystemFileHandle | null, nativePath?: string): Promise<string> => {
+      if (nativePath) {
+        return await readNativeFile(nativePath);
+      }
+      if (fileHandle && typeof fileHandle.getFile === 'function') {
+        const file = await fileHandle.getFile();
+        return await file.text();
+      }
+      return '';
     },
     []
   );
 
   const writeFile = useCallback(
     async (
-      fileHandle: FileSystemFileHandle,
-      content: string
+      fileHandle?: FileSystemFileHandle | null,
+      content = '',
+      nativePath?: string
     ): Promise<boolean> => {
-      if (!fileHandle || typeof fileHandle.createWritable !== 'function') {
-        return false;
+      if (nativePath) {
+        try {
+          await writeNativeFile(nativePath, content);
+          return true;
+        } catch (err) {
+          console.error('Error writing native file directly to disk:', err);
+          return false;
+        }
       }
-      try {
-        const writable = await fileHandle.createWritable();
-        await writable.write(content);
-        await writable.close();
-        return true;
-      } catch (err) {
-        console.error('Error writing file directly to disk:', err);
-        return false;
+      if (fileHandle && typeof fileHandle.createWritable === 'function') {
+        try {
+          const writable = await fileHandle.createWritable();
+          await writable.write(content);
+          await writable.close();
+          return true;
+        } catch (err) {
+          console.error('Error writing file directly to disk:', err);
+          return false;
+        }
       }
+      return false;
     },
     []
   );
 
   const createFile = useCallback(
     async (
-      parentHandle: FileSystemDirectoryHandle,
-      fileName: string,
-      initialContent = '# Untitled\n\nStart writing...\n'
-    ): Promise<FileSystemFileHandle | null> => {
+      parentHandle?: FileSystemDirectoryHandle | null,
+      fileName = '',
+      initialContent = '# Untitled\n\nStart writing...\n',
+      parentNativePath?: string
+    ): Promise<{ handle?: FileSystemFileHandle; nativePath?: string } | null> => {
       try {
         const cleanName = fileName.includes('.') ? fileName : `${fileName}.md`;
-        const newFileHandle = await parentHandle.getFileHandle(cleanName, {
-          create: true,
-        });
-        const writable = await newFileHandle.createWritable();
-        await writable.write(initialContent);
-        await writable.close();
 
-        await refreshTree();
-        return newFileHandle;
+        if (parentNativePath || (isTauri() && workspace.nativePath)) {
+          const dir = parentNativePath || workspace.nativePath!;
+          const filePath = await createNativeFile(dir, cleanName);
+          if (initialContent) {
+            await writeNativeFile(filePath, initialContent);
+          }
+          await refreshTree();
+          return { nativePath: filePath };
+        }
+
+        if (parentHandle) {
+          const newFileHandle = await parentHandle.getFileHandle(cleanName, {
+            create: true,
+          });
+          const writable = await newFileHandle.createWritable();
+          await writable.write(initialContent);
+          await writable.close();
+
+          await refreshTree();
+          return { handle: newFileHandle };
+        }
+
+        return null;
       } catch (err) {
         console.error('Failed to create file:', err);
         return null;
       }
     },
-    [refreshTree]
+    [refreshTree, workspace.nativePath]
   );
 
   const createFolder = useCallback(
     async (
-      parentHandle: FileSystemDirectoryHandle,
-      folderName: string
+      parentHandle?: FileSystemDirectoryHandle | null,
+      folderName = '',
+      parentNativePath?: string
     ): Promise<boolean> => {
       try {
-        await parentHandle.getDirectoryHandle(folderName, { create: true });
-        await refreshTree();
-        return true;
+        if (parentNativePath || (isTauri() && workspace.nativePath)) {
+          const dir = parentNativePath || workspace.nativePath!;
+          await createNativeDir(dir, folderName);
+          await refreshTree();
+          return true;
+        }
+
+        if (parentHandle) {
+          await parentHandle.getDirectoryHandle(folderName, { create: true });
+          await refreshTree();
+          return true;
+        }
+
+        return false;
       } catch (err) {
         console.error('Failed to create folder:', err);
         return false;
       }
     },
-    [refreshTree]
+    [refreshTree, workspace.nativePath]
   );
 
   const deleteEntry = useCallback(
     async (
-      parentHandle: FileSystemDirectoryHandle,
-      name: string
+      parentHandle?: FileSystemDirectoryHandle | null,
+      name = '',
+      node?: FileTreeNode
     ): Promise<boolean> => {
       try {
-        await parentHandle.removeEntry(name, { recursive: true });
-        await refreshTree();
-        return true;
+        if (node?.nativePath) {
+          await deleteNativeEntry(node.nativePath);
+          await refreshTree();
+          return true;
+        }
+
+        if (parentHandle) {
+          await parentHandle.removeEntry(name, { recursive: true });
+          await refreshTree();
+          return true;
+        }
+
+        return false;
       } catch (err) {
         console.error('Failed to delete entry:', err);
         return false;
@@ -430,38 +671,53 @@ export function useWorkspace() {
 
   const renameEntry = useCallback(
     async (
-      parentHandle: FileSystemDirectoryHandle,
-      oldName: string,
-      newName: string,
-      kind: 'file' | 'directory'
+      parentHandle?: FileSystemDirectoryHandle | null,
+      oldName = '',
+      newName = '',
+      kind: 'file' | 'directory' = 'file',
+      node?: FileTreeNode
     ): Promise<boolean> => {
       try {
         if (oldName === newName) return true;
 
-        if (kind === 'file') {
-          const oldHandle = await parentHandle.getFileHandle(oldName);
-          // Check if native .move() is supported
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          if (typeof (oldHandle as any).move === 'function') {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (oldHandle as any).move(newName);
-          } else {
-            // Fallback: read content, create new, remove old
-            const content = await readFile(oldHandle);
-            const newHandle = await parentHandle.getFileHandle(newName, {
-              create: true,
-            });
-            await writeFile(newHandle, content);
-            await parentHandle.removeEntry(oldName);
-          }
-        } else {
-          // Directories: show alert if move is unsupported
-          alert('Folder renaming is not natively supported in this browser version.');
-          return false;
+        if (node?.nativePath) {
+          const lastSlash = Math.max(node.nativePath.lastIndexOf('/'), node.nativePath.lastIndexOf('\\'));
+          const parentDir = node.parentNativePath || (lastSlash >= 0 ? node.nativePath.substring(0, lastSlash) : '');
+          const separator = node.nativePath.includes('\\') ? '\\' : '/';
+          const newPath = parentDir ? `${parentDir}${separator}${newName}` : newName;
+          await renameNativeEntry(node.nativePath, newPath);
+          await refreshTree();
+          return true;
         }
 
-        await refreshTree();
-        return true;
+        if (parentHandle) {
+          if (kind === 'file') {
+            const oldHandle = await parentHandle.getFileHandle(oldName);
+            // Check if native .move() is supported
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (typeof (oldHandle as any).move === 'function') {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await (oldHandle as any).move(newName);
+            } else {
+              // Fallback: read content, create new, remove old
+              const content = await readFile(oldHandle);
+              const newHandle = await parentHandle.getFileHandle(newName, {
+                create: true,
+              });
+              await writeFile(newHandle, content);
+              await parentHandle.removeEntry(oldName);
+            }
+          } else {
+            // Directories: show alert if move is unsupported
+            alert('Folder renaming is not natively supported in this browser version.');
+            return false;
+          }
+
+          await refreshTree();
+          return true;
+        }
+
+        return false;
       } catch (err) {
         console.error('Failed to rename entry:', err);
         return false;

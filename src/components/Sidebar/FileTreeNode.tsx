@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FileTreeNode as TreeNodeType, isMarkdownFile } from '../../types/workspace';
+import { ConfirmModal } from '../ConfirmModal';
 import {
   ChevronRight,
   ChevronDown,
@@ -21,14 +22,15 @@ interface FileTreeNodeProps {
   onExpandFolder?: (folderId: string) => void;
   isSearching?: boolean;
   onSelectFile: (node: TreeNodeType) => void;
-  onCreateFileInDir: (dirHandle: FileSystemDirectoryHandle) => void;
-  onCreateFolderInDir?: (dirHandle: FileSystemDirectoryHandle) => void;
-  onDeleteNode: (parentHandle: FileSystemDirectoryHandle, name: string) => void;
+  onCreateFileInDir: (dirHandle?: FileSystemDirectoryHandle, dirNativePath?: string) => void;
+  onCreateFolderInDir?: (dirHandle?: FileSystemDirectoryHandle, dirNativePath?: string) => void;
+  onDeleteNode: (parentHandle?: FileSystemDirectoryHandle, name?: string, node?: TreeNodeType) => void;
   onRenameNode: (
-    parentHandle: FileSystemDirectoryHandle,
-    oldName: string,
-    newName: string,
-    kind: 'file' | 'directory'
+    parentHandle?: FileSystemDirectoryHandle,
+    oldName?: string,
+    newName?: string,
+    kind?: 'file' | 'directory',
+    node?: TreeNodeType
   ) => void;
 }
 
@@ -48,6 +50,7 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
 }) => {
   const [localExpanded, setLocalExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editName, setEditName] = useState(node.name);
 
   const isDirectory = node.kind === 'directory';
@@ -74,25 +77,32 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
 
   const handleRenameSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (node.parentHandle && editName.trim() && editName !== node.name) {
-      onRenameNode(node.parentHandle, node.name, editName.trim(), node.kind);
+    if (editName.trim() && editName !== node.name) {
+      onRenameNode(
+        node.parentHandle as FileSystemDirectoryHandle,
+        node.name,
+        editName.trim(),
+        node.kind,
+        node
+      );
     }
     setIsEditing(false);
   };
 
-  const handleDelete = (e: React.MouseEvent) => {
+  const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!node.parentHandle) return;
-    const confirm = window.confirm(`Delete "${node.name}" from your local disk?`);
-    if (confirm) {
-      onDeleteNode(node.parentHandle, node.name);
-    }
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = () => {
+    setIsDeleteConfirmOpen(false);
+    onDeleteNode(node.parentHandle as FileSystemDirectoryHandle, node.name, node);
   };
 
   const handleNewFile = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isDirectory) {
-      onCreateFileInDir(node.handle as FileSystemDirectoryHandle);
+      onCreateFileInDir(node.handle as FileSystemDirectoryHandle, node.nativePath);
       if (onExpandFolder) {
         onExpandFolder(node.id);
       } else {
@@ -104,7 +114,7 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
   const handleNewFolder = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isDirectory && onCreateFolderInDir) {
-      onCreateFolderInDir(node.handle as FileSystemDirectoryHandle);
+      onCreateFolderInDir(node.handle as FileSystemDirectoryHandle, node.nativePath);
       if (onExpandFolder) {
         onExpandFolder(node.id);
       } else {
@@ -218,7 +228,7 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
             )}
             <button
               type="button"
-              onClick={handleDelete}
+              onClick={handleDeleteClick}
               className="p-1 rounded text-[#59606d] dark:text-[#9ba2b0] hover:text-red-600 hover:bg-red-500/10"
               title="Delete"
               aria-label="Delete"
@@ -228,6 +238,17 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={isDeleteConfirmOpen}
+        title={`Delete ${isDirectory ? 'Folder' : 'File'}?`}
+        message={`Are you sure you want to delete "${node.name}" from your local disk? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setIsDeleteConfirmOpen(false)}
+      />
 
       {/* Recursive children for directory */}
       {isDirectory && isExpanded && node.children && (

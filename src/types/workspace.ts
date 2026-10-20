@@ -5,8 +5,10 @@ export interface FileTreeNode {
   name: string;
   path: string;
   kind: NodeKind;
-  handle: FileSystemFileHandle | FileSystemDirectoryHandle;
+  handle?: FileSystemFileHandle | FileSystemDirectoryHandle;
   parentHandle?: FileSystemDirectoryHandle;
+  nativePath?: string;
+  parentNativePath?: string;
   children?: FileTreeNode[];
   extension?: string;
   sizeBytes?: number;
@@ -31,6 +33,7 @@ export interface OpenTab {
 
 export interface WorkspaceState {
   rootHandle: FileSystemDirectoryHandle | null;
+  nativePath?: string;
   name: string;
   tree: FileTreeNode[];
   isLoading: boolean;
@@ -42,6 +45,7 @@ export interface RecentWorkspace {
   name: string;
   lastOpened: number;
   handleKey: string;
+  nativePath?: string;
 }
 
 /**

@@ -5,7 +5,7 @@ import { flattenSearchableFiles, searchDocument } from '../lib/workspaceSearch';
 
 interface UseWorkspaceSearchProps {
   tree: FileTreeNode[];
-  readFile: (fileHandle: FileSystemFileHandle) => Promise<string>;
+  readFile: (fileHandle?: FileSystemFileHandle, nativePath?: string) => Promise<string>;
   openTabs: OpenTab[];
 }
 
@@ -72,7 +72,7 @@ export function useWorkspaceSearch({
             text = contentCacheRef.current.get(node.id);
           } else {
             try {
-              text = await readFile(node.handle as FileSystemFileHandle);
+              text = await readFile(node.handle as FileSystemFileHandle, node.nativePath);
               if (text !== undefined) {
                 contentCacheRef.current.set(node.id, text);
               }

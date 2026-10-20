@@ -149,6 +149,52 @@ export async function recordRecentWorkspace(
   return updatedList;
 }
 
+export function recordNativeRecentWorkspace(
+  pathOrName: string,
+  nameOrPath?: string
+): RecentWorkspace[] {
+  let finalPath = pathOrName;
+  let finalName = nameOrPath;
+
+  if (nameOrPath && (nameOrPath.includes('/') || nameOrPath.includes('\\'))) {
+    finalPath = nameOrPath;
+    finalName = pathOrName;
+  } else if (!finalName) {
+    finalName = finalPath.split(/[\\/]/).pop() || finalPath;
+  }
+
+  const existing = getRecentWorkspaces();
+  const handleKey = `native:${finalPath}`;
+
+  const existingIndex = existing.findIndex(
+    w => w.nativePath === finalPath || w.handleKey === handleKey
+  );
+
+  let updatedItem: RecentWorkspace;
+  if (existingIndex >= 0) {
+    updatedItem = {
+      ...existing[existingIndex],
+      name: finalName,
+      nativePath: finalPath,
+      lastOpened: Date.now(),
+      handleKey,
+    };
+    existing.splice(existingIndex, 1);
+  } else {
+    updatedItem = {
+      id: `ws_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: finalName,
+      nativePath: finalPath,
+      lastOpened: Date.now(),
+      handleKey,
+    };
+  }
+
+  const updatedList = [updatedItem, ...existing].slice(0, 10);
+  saveRecentWorkspaces(updatedList);
+  return updatedList;
+}
+
 export async function removeRecentWorkspace(id: string): Promise<RecentWorkspace[]> {
   const existing = getRecentWorkspaces();
   const target = existing.find(w => w.id === id);

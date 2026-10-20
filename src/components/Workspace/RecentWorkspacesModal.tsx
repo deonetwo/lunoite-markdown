@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { RecentWorkspace } from '../../types/workspace';
 import { formatRelativeTime } from '../../lib/formatDate';
+import { ConfirmModal } from '../ConfirmModal';
 import {
   FolderOpen,
   FolderPlus,
@@ -35,6 +36,7 @@ export const RecentWorkspacesModal: React.FC<RecentWorkspacesModalProps> = ({
   onCreateNewWorkspace,
 }) => {
   const [filterQuery, setFilterQuery] = useState('');
+  const [isClearAllConfirmOpen, setIsClearAllConfirmOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -220,11 +222,7 @@ export const RecentWorkspacesModal: React.FC<RecentWorkspacesModalProps> = ({
           {recentWorkspaces.length > 0 && (
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm('Clear all workspace history? (Your files on disk will not be affected.)')) {
-                  onClearAllRecent();
-                }
-              }}
+              onClick={() => setIsClearAllConfirmOpen(true)}
               className="text-xs text-[#59606d] dark:text-[#9ba2b0] hover:text-red-600 hover:underline px-2 py-1"
             >
               Clear History
@@ -232,6 +230,20 @@ export const RecentWorkspacesModal: React.FC<RecentWorkspacesModalProps> = ({
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={isClearAllConfirmOpen}
+        title="Clear Workspace History?"
+        message="Are you sure you want to clear your recent workspaces history? Your actual files and folders on disk will not be affected."
+        confirmLabel="Clear History"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={() => {
+          setIsClearAllConfirmOpen(false);
+          onClearAllRecent();
+        }}
+        onCancel={() => setIsClearAllConfirmOpen(false)}
+      />
     </div>
   );
 };
